@@ -402,7 +402,6 @@ if __name__ == "__main__":
     print(Fore.LIGHTWHITE_EX + "="*90)
     print(Fore.LIGHTBLUE_EX + Style.BRIGHT + " " * 28 + "CREDITS: MSMC & @minex00(MineX13)".center(34))
     print(Fore.LIGHTWHITE_EX + "="*90 + Style.RESET_ALL + "\n")
-    combo_file = input("Enter combo file path: ").strip()
     print(Fore.GREEN + "=== DonutSMP BAN CHECKER ===" + Style.RESET_ALL)
     combo_file = input("Enter combo file path: ").strip()
     print(Fore.LIGHTBLUE_EX + "Proxy Type: [1] Http/s - [2] Socks4 - [3] Socks5 - [4] None - [5] Auto Scraper")
