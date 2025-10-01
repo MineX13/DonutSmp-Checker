@@ -75,4 +75,5 @@ Hey! This is a tool that tries to log into Minecraft accounts and join the Donut
 This tool does NOT check if Minecraft accounts are valid.  
 It ONLY checks if a valid account is banned or unbanned on DonutSMP.  
 Don’t use it for combo-checking Minecraft accounts.  
-Use responsibly and for fun/education only!
+Use responsibly and for fun/education only and Creator is not responsible for anything you do with this!
+!!!!!!YOU ACCEPT IT BY DOWNLOADING IT!!!!!!
