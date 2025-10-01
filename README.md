@@ -77,3 +77,6 @@ It ONLY checks if a valid account is banned or unbanned on DonutSMP.
 Don’t use it for combo-checking Minecraft accounts.  
 Use responsibly and for fun/education only and Creator is not responsible for anything you do with this!
 !!!!!!YOU ACCEPT IT BY DOWNLOADING IT!!!!!!
+
+<img width="935" height="755" alt="{A99DC289-AC4F-4E95-B620-0B4365C449B2}" src="https://github.com/user-attachments/assets/c1338496-a41f-4cc4-9d55-f4a9b1f23155" />
+
