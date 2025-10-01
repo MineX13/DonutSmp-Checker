@@ -279,13 +279,13 @@ def join_donutsmp_bot(mc_name, mc_uuid, mc_token, combo, folder, config):
                 ban_id = banid_match.group(1).strip() if banid_match else ""
                 fields = [reason, f"Time Left: {time_left}" if time_left else "", f"Ban ID: {ban_id}" if ban_id else ""]
                 output = '.'.join([f for f in fields if f])
-                print(Fore.RED + f"[BAD] {combo} | Logged in as {mc_name} | Status: {output}" + Style.RESET_ALL)
+                print(Fore.RED + f"[BANNED] {combo} | Logged in as {mc_name} | Status: {output}" + Style.RESET_ALL)
                 save_result(folder, "Banned.txt", f"{combo} | {mc_name} | {output}")
                 if config.getboolean("Settings", "SaveCapture"):
                     cap = Capture(email, password, mc_name, "banned", reason, time_left, ban_id)
                     save_result(folder, "Capture.txt", cap.builder())
             else:
-                print(Fore.RED + f"[BAD] {combo} | Logged in as {mc_name} | Status: banned" + Style.RESET_ALL)
+                print(Fore.RED + f"[BANNED] {combo} | Logged in as {mc_name} | Status: banned" + Style.RESET_ALL)
                 save_result(folder, "Banned.txt", f"{combo} | {mc_name} | Status: banned")
         else:
             print(Fore.RED + f"[BAD] {combo} | Status: unknown error" + Style.RESET_ALL)
