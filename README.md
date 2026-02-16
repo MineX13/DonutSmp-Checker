@@ -67,7 +67,7 @@ Hey! This is a tool that tries to log into Minecraft accounts and join the Donut
 ## Credits
 
 - Inspired by MSMC
-- Made by @minex00 AKA Minex13
+- Made by @minex.13 AKA Minex13
 
 ---
 
