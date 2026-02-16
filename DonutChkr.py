@@ -36,9 +36,61 @@ if hasattr(threading, "excepthook"):
         log_exception(args.exc_type, args.exc_value, args.exc_traceback)
     threading.excepthook = thread_excepthook
 from colorama import Fore, Style, init
+import minecraft
+from minecraft import Version, initglobals
 from minecraft.networking.connection import Connection
 from minecraft.authentication import AuthenticationToken, Profile
-from minecraft.networking.packets import clientbound
+from minecraft.networking.packets import clientbound, serverbound
+from minecraft.networking.packets.serverbound.login import LoginStartPacket
+from minecraft.networking.types import String, UUID
+import uuid
+
+# Monkeypatch the library to support protocol 764 (Minecraft 1.20.2)
+if not any(v.protocol == 764 for v in minecraft.KNOWN_MINECRAFT_VERSION_RECORDS):
+    minecraft.KNOWN_MINECRAFT_VERSION_RECORDS.extend([
+        Version('1.18.2', 758, True),
+        Version('1.19', 759, True),
+        Version('1.19.1', 760, True),
+        Version('1.19.2', 760, True),
+        Version('1.19.3', 761, True),
+        Version('1.19.4', 762, True),
+        Version('1.20', 763, True),
+        Version('1.20.1', 763, True),
+        Version('1.20.2', 764, True),
+    ])
+    initglobals(use_known_records=True)
+
+def extract_chat_text(data):
+    if not data:
+        return ""
+    if isinstance(data, str):
+        if not (data.startswith('{') or data.startswith('[')):
+            return data
+        try:
+            data = json.loads(data)
+        except json.JSONDecodeError:
+            return data
+    
+    text = ""
+    if isinstance(data, dict):
+        text += data.get("text", "")
+        for extra in data.get("extra", []):
+            text += extract_chat_text(extra)
+    elif isinstance(data, list):
+        for item in data:
+            text += extract_chat_text(item)
+    return text
+
+# Monkeypatch LoginStart for 1.20.2+ UUID support
+def login_start_write_fields(self, packet_buffer):
+    String.send(self.name, packet_buffer)
+    if self.context.protocol_later_eq(764):
+        val = getattr(self, 'player_uuid', None)
+        if val is None: val = uuid.uuid4()
+        # Pass as string to avoid AttributeError in the library's UUID.send
+        UUID.send(str(val), packet_buffer)
+LoginStartPacket.write_fields = login_start_write_fields
+
 init(autoreset=True)
 
 RESULTS_DIR = "results"
@@ -61,7 +113,9 @@ def load_config():
     config = configparser.ConfigParser()
     default_settings = {
         "Threads": "10",
-        "SaveCapture": "True"
+        "SaveCapture": "True",
+        "delay_between_checks": "1.0",
+        "protocol": "764"
     }
     if not os.path.isfile(config_path):
         config["Settings"] = default_settings
@@ -315,7 +369,7 @@ def join_donutsmp_bot(mc_name, mc_uuid, mc_token, combo, folder, config):
     auth_token = AuthenticationToken(username=mc_name, access_token=mc_token, client_token=uuid.uuid4().hex)
     auth_token.profile = Profile(id_=mc_uuid, name=mc_name)
     try:
-        connection = Connection("donutsmp.net", 25565, auth_token=auth_token, initial_version=393, allowed_versions={393})
+        connection = Connection("donutsmp.net", 25565, auth_token=auth_token, initial_version=764, allowed_versions={764})
 
         @connection.listener(clientbound.login.DisconnectPacket, early=True)
         def login_disconnect(packet):
@@ -327,14 +381,31 @@ def join_donutsmp_bot(mc_name, mc_uuid, mc_token, combo, folder, config):
             disconnect_message = msg
             result = "banned"
 
+        @connection.listener(clientbound.login.LoginSuccessPacket, early=True)
+        def login_success(packet):
+            nonlocal result
+            result = "unbanned"
+
         @connection.listener(clientbound.play.JoinGamePacket, early=True)
         def joined_server(packet):
             nonlocal result
             result = "unbanned"
 
-        connection.connect()
+        # Custom connect sequence to handle 1.20.2+ requirements
+        connection._connect()
+        connection._handshake(next_state=2) # 2 = Login state
+        
+        login_start = serverbound.login.LoginStartPacket()
+        login_start.name = mc_name
+        login_start.player_uuid = mc_uuid
+        connection.write_packet(login_start)
+        
+        from minecraft.networking.connection import LoginReactor
+        connection.reactor = LoginReactor(connection)
+        connection._start_network_thread()
+
         c = 0
-        while result is None and c < 1000:
+        while result is None and c < 1500: # 15 seconds
             time.sleep(0.01)
             c += 1
 
@@ -347,16 +418,27 @@ def join_donutsmp_bot(mc_name, mc_uuid, mc_token, combo, folder, config):
             time.sleep(1)
         elif result == "banned":
             if disconnect_message:
-                clean = re.sub(r'§.', '', disconnect_message)
+                clean = extract_chat_text(disconnect_message)
+                clean = re.sub(r'§.', '', clean)
                 # Try to extract reason, time left, ban id
+                # Fallback to the first line if "You are banned" isn't found
                 reason_match = re.search(r'(You are .+?)(?:\\n|\n|$)', clean)
-                reason = reason_match.group(1).strip() if reason_match else "banned (unknown reason)"
-                time_match = re.search(r'Time Left: ([^\n\\]+)', clean)
+                if reason_match:
+                    reason = reason_match.group(1).strip()
+                else:
+                    # Capture the first non-empty line that doesn't look like a field
+                    lines = [l.strip() for l in clean.split('\n') if l.strip()]
+                    reason = lines[0] if lines else "banned (unknown reason)"
+                
+                # Improved time left detection
+                time_match = re.search(r'(?:Time Left|Duration|Expires):?\s*([^\n\\]+)', clean, re.I)
                 time_left = time_match.group(1).strip() if time_match else ""
-                banid_match = re.search(r'Ban ID: ([^\n\\]+)', clean)
+                
+                banid_match = re.search(r'Ban ID:?\s*#?([^\n\\]+)', clean, re.I)
                 ban_id = banid_match.group(1).strip() if banid_match else ""
-                fields = [reason, f"Time Left: {time_left}" if time_left else "", f"Ban ID: {ban_id}" if ban_id else ""]
-                output = '.'.join([f for f in fields if f])
+                
+                fields = [reason, f"Time Left: {time_left}" if time_left else "", f"Ban ID: #{ban_id}" if ban_id else ""]
+                output = ' | '.join([f for f in fields if f])
                 print(Fore.RED + f"[BANNED] {combo} | Logged in as {mc_name} | Status: {output}" + Style.RESET_ALL)
                 save_result(folder, "Banned.txt", f"{combo} | {mc_name} | {output}")
                 if config.getboolean("Settings", "SaveCapture"):
@@ -544,6 +626,10 @@ if __name__ == "__main__":
     config = load_config()
     combos = load_combos(combo_file)
     print(Fore.CYAN + f"Loaded {len(combos)} combos." + Style.RESET_ALL)
+    
+    # Get defaults from config
+    def_threads = config.get("Settings", "Threads", fallback="10")
+    
     # Recommend thread count based on proxy type
     if proxytype == "'4'":
         print(Fore.LIGHTYELLOW_EX + "Proxyless mode detected. Recommended threads: 1-5 (to avoid rate limits).")
@@ -552,7 +638,8 @@ if __name__ == "__main__":
 
     while True:
         try:
-            max_threads = int(input(Fore.LIGHTBLUE_EX + "Enter number of threads: " + Style.RESET_ALL))
+            thread_input = input(Fore.LIGHTBLUE_EX + f"Enter number of threads [{def_threads}]: " + Style.RESET_ALL).strip()
+            max_threads = int(thread_input) if thread_input else int(def_threads)
             if proxytype == "'4'" and not (1 <= max_threads <= 5):
                 print(Fore.LIGHTRED_EX + "For proxyless, keep threads between 1 and 5." + Style.RESET_ALL)
             elif proxytype != "'4'" and not (1 <= max_threads <= 100):
