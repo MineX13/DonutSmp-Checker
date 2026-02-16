@@ -1,4 +1,4 @@
-# DonutSMP Minecraft Ban Checker Bot
+# DonutSMP Minecraft Ban Checker Bot (Verson Error Fixed)
 
 Hey! This is a tool that tries to log into Minecraft accounts and join the DonutSMP server (`donutsmp.net`). It tells you if the account is banned, unbanned, or if something else happened. You can use proxies, run a bunch of bots at once, and all your results get saved in a folder for you.
 
